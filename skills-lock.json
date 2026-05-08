@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "implement-paper": {
+      "source": "marimo-team/skills",
+      "sourceType": "github",
+      "skillPath": "skills/implement-paper/SKILL.md",
+      "computedHash": "bd4ba2654681c6d5e83bd2d54e9af4a419cfad2dfc3a7cb2572933dae10d3dbb"
+    },
+    "marimo-pair": {
+      "source": "marimo-team/marimo-pair",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "faeb36244e37f767738e31f4c49cc8e48a1aaab8572183b3768651f1d30af1df"
+    }
+  }
+}

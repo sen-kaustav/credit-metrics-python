@@ -100,7 +100,7 @@ def _(mo):
 
 
 @app.cell
-def _(df_one_year_fwd_zero_curves, df_recovery_rates, np, pl):
+def _(df_one_year_fwd_zero_curves, df_recovery_rates, mo, np, pl):
     spot_rates = (
         df_one_year_fwd_zero_curves.select(pl.exclude("Category")).to_numpy() / 100
     )
@@ -121,7 +121,7 @@ def _(df_one_year_fwd_zero_curves, df_recovery_rates, np, pl):
     )
     terminal_bond_values = np.append(terminal_bond_values.flatten(), default_value)
 
-    terminal_bond_values
+    mo.ui.matrix(terminal_bond_values.reshape(1, -1), disabled=True, precision=2)
     return (terminal_bond_values,)
 
 
@@ -139,15 +139,121 @@ def _(df_transition_prob, np, pl, terminal_bond_values):
         df_transition_prob.filter(pl.col("Initial_Rating") == "BBB")
         .select(pl.exclude("Initial_Rating"))
         .to_numpy()
-        .flatten()
+        .reshape(-1, 1)
     )
     transition_prob = transition_prob / 100
 
-    mean = np.sum(terminal_bond_values * transition_prob)
-    variance = np.sum((terminal_bond_values - mean) ** 2 * transition_prob)
+    mean = (terminal_bond_values @ transition_prob).item()
+    variance = ((terminal_bond_values - mean) ** 2 @ transition_prob).item()
 
-    {"mean": mean.round(2), "standard deviance": np.sqrt(variance).round(2)}
+    {"mean": round(mean, 2), "standard deviance": round(np.sqrt(variance), 2)}
     return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Calculating credit risk for a portfolio
+
+    In this example, we will calculate the credit risk across a portfolio with two specific bonds:
+
+    - Bond #1: BBB rated, senior unsecured, 6% annual coupon, five-year maturity.
+    - Bond #2: A rated, senior unsecured, 5% annual coupon, three-year maturity.
+
+    If we assume that the two bonds are completely independent, their joint transitional probabilities will simply be the product of their corresponding marginal probabilities. This is shown in the matrix below where the rows represent the rating transitions for Bond #1 (going from AAA to Default) and the columns for Bond #2.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(credit_ratings, df_transition_prob, mo, pl):
+    transition_prob_BBB = (
+        df_transition_prob.filter(pl.col("Initial_Rating") == "BBB")
+        .select(pl.exclude("Initial_Rating"))
+        .to_numpy()
+        .reshape(-1, 1)
+    ) / 100
+
+    transition_prob_A = (
+        df_transition_prob.filter(pl.col("Initial_Rating") == "A")
+        .select(pl.exclude("Initial_Rating"))
+        .to_numpy()
+        .reshape(1, -1)
+    ) / 100
+
+    mo.ui.matrix(
+        (transition_prob_BBB @ transition_prob_A) * 100,
+        disabled=True,
+        precision=2,
+        row_labels=credit_ratings,
+        column_labels=credit_ratings,
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    The assumption of independence is too simplistic and rarely holds true in practice. So, we need to derive some kind of correlation between the different assets.
+
+    The actual model to derive such correlated joint probability distributions will be covered later on. For this particular example, we will assume that the joint distribution (assuming a 30% asset correlation) is provided to us.
+    """)
+    return
+
+
+@app.cell
+def _(calculate_bond_values, credit_ratings, mo, np):
+    bond_1_values = calculate_bond_values(bond_1=True)
+    bond_2_values = calculate_bond_values(bond_1=False)
+
+    bond_1_values_matrix = np.tile(bond_1_values.reshape(-1, 1), (1, 8))
+    bond_2_values_matrix = np.tile(bond_2_values, (8, 1))
+
+    bond_values_portfolio = bond_1_values_matrix + bond_2_values_matrix
+
+    mo.ui.matrix(
+        bond_values_portfolio,
+        disabled=True,
+        precision=2,
+        row_labels=credit_ratings,
+        column_labels=credit_ratings,
+    )
+    return
+
+
+@app.cell
+def _(df_one_year_fwd_zero_curves, df_recovery_rates, np, pl):
+    def calculate_bond_values(bond_1: bool):
+        spot_rates = (
+            df_one_year_fwd_zero_curves.select(pl.exclude("Category")).to_numpy()
+            / 100
+        )
+
+        discount_factors = (1 + spot_rates) ** -np.arange(1, 5)
+        # Add a column of 1's for t=0
+        discount_factors = np.column_stack([np.ones((7, 1)), discount_factors])
+
+        if bond_1:
+            bond_cashflows = np.array([6, 6, 6, 6, 106]).reshape((-1, 1))
+        else:
+            bond_cashflows = np.array([5, 5, 105, 0, 0]).reshape((-1, 1))
+
+        terminal_bond_values = discount_factors @ bond_cashflows
+
+        # Value of the bond under default state
+        default_value = (
+            df_recovery_rates.filter(
+                pl.col("Seniority_Class") == "Senior Unsecured"
+            )
+            .select("Mean")
+            .item()
+        )
+        terminal_bond_values = np.append(
+            terminal_bond_values.flatten(), default_value
+        )
+        return terminal_bond_values
+
+    return (calculate_bond_values,)
 
 
 @app.cell(hide_code=True)
@@ -186,7 +292,7 @@ def _(pl):
     return (df_recovery_rates,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(pl):
     df_one_year_fwd_zero_curves = pl.DataFrame(
         {
@@ -198,6 +304,12 @@ def _(pl):
         }
     )
     return (df_one_year_fwd_zero_curves,)
+
+
+@app.cell(hide_code=True)
+def _():
+    credit_ratings = ["AAA", "AA", "A", "BBB", "BB", "B", "CCC", "Default"]
+    return (credit_ratings,)
 
 
 @app.cell
@@ -212,6 +324,7 @@ def _():
     import polars as pl
     import numpy as np
 
+    np.set_printoptions(precision=4, suppress=True)
     return np, pl
 
 

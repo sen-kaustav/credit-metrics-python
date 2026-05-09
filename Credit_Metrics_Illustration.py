@@ -543,10 +543,12 @@ def _(markov_terms, minimize, moody_cum_default_obs, np, softmax):
             if t in terms: res[t] = Mt[:_N_R, _N_R]
         return np.column_stack([res[t] for t in terms])
 
-    def _objective(x):
-        return np.sum((_cum_def(_to_matrix(x), markov_terms) - moody_cum_default_obs) ** 2)
-
-    # Moody's Table 6.1 one-year matrix as the starting point.
+    # Moody's Table 6.1 one-year matrix: starting point and regularisation target.
+    # Without regularisation the optimizer is free to redistribute probability mass
+    # among non-default states arbitrarily (cumulative defaults only constrain the
+    # default column of M^t). Adding an L2 penalty towards M0 keeps the matrix
+    # economically sensible (diagonal dominant, smooth migrations) at minimal cost
+    # to the cumulative-default fit.
     _M0 = np.array([
         [93.40, 5.94, 0.64, 0.00, 0.02, 0.00, 0.00, 0.00],
         [ 1.61,90.55, 7.46, 0.26, 0.09, 0.01, 0.00, 0.02],
@@ -558,6 +560,14 @@ def _(markov_terms, minimize, moody_cum_default_obs, np, softmax):
     ]) / 100
     _x0 = np.log(np.clip(_M0, 1e-6, None)).flatten()
 
+    markov_reg_lambda = 0.01
+
+    def _objective(x):
+        M = _to_matrix(x)
+        cum_err = np.sum((_cum_def(M, markov_terms) - moody_cum_default_obs) ** 2)
+        reg = markov_reg_lambda * np.sum((M[:_N_R] - _M0) ** 2)
+        return cum_err + reg
+
     _result = minimize(
         _objective, _x0, method='L-BFGS-B',
         options={'maxiter': 50000, 'ftol': 1e-16, 'gtol': 1e-12},
@@ -565,35 +575,20 @@ def _(markov_terms, minimize, moody_cum_default_obs, np, softmax):
 
     markov_fit_matrix = _to_matrix(_result.x)
     markov_cum_default_fit = _cum_def(markov_fit_matrix, markov_terms)
-    markov_fit_rmse = float(np.sqrt(_result.fun / moody_cum_default_obs.size))
-    return markov_cum_default_fit, markov_fit_matrix, markov_fit_rmse
-
-
-@app.cell(hide_code=True)
-def _(markov_fit_rmse, mo):
-    mo.md(rf"""
-    ### Imputed Transition Matrix (Table 6.5)
-
-    The matrix below was derived using **only** the cumulative default data from Table 6.4
-    via least-squares optimisation - with no direct reference to any historically tabulated
-    one-year matrix. RMSE across all 56 rating/term pairs:
-    **{markov_fit_rmse * 100:.4f} percentage points**.
-
-    As the CreditMetrics document notes: *"at this point we are most interested in showing
-    that (i) such a matrix can be derived and (ii) that the process of defaults is closely
-    replicated by a Markov process."*
-    """)
-    return
+    # RMSE computed on cumulative-default fit only (excludes regularisation term)
+    markov_fit_rmse = float(np.sqrt(
+        np.sum((markov_cum_default_fit - moody_cum_default_obs) ** 2)
+        / moody_cum_default_obs.size
+    ))
+    return markov_cum_default_fit, markov_fit_matrix
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(r"""
-    ### Validation: Modelled vs Observed Cumulative Default Rates (Table 6.6)
+    mo.md(rf"""
+    ### Imputed Transition Matrix (Table 6.5)
 
-    The two matrices below compare the observed Moody's rates (Table 6.4) against the rates
-    implied by the fitted transition matrix. The close agreement confirms that a Markov process
-    is a valid statistical model for credit rating migrations.
+    The matrix below is fitted to the Moody's cumulative default data (Table 6.4) via least-squares, with an L2 regularisation term penalising deviation from the Moody's historical one-year matrix. This mirrors the approach in Section 6.4.5 of the CreditMetrics document (_match historically tabulated transition matrix_), which adds the historical matrix as a soft constraint to recover economically sensible results (diagonal dominance, smooth migrations) that a pure cumulative-default fit cannot guarantee.
     """)
     return
 
@@ -607,6 +602,18 @@ def _(credit_ratings, markov_fit_matrix, mo):
         row_labels=credit_ratings[:-1],
         column_labels=credit_ratings,
     )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Validation: Modelled vs Observed Cumulative Default Rates (Table 6.6)
+
+    The two matrices below compare the observed Moody's rates (Table 6.4) against the rates
+    implied by the fitted transition matrix. The close agreement confirms that a Markov process
+    is a valid statistical model for credit rating migrations.
+    """)
     return
 
 
